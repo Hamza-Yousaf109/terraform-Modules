@@ -70,6 +70,13 @@ jobs:
         working-directory: environments/${{ needs.detect.outputs.env }}
         run: terraform plan -out=tfplan
 
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ needs.detect.outputs.env }}
+          path: environments/${{ needs.detect.outputs.env }}/tfplan
+          retention-days: 1
+
   deploy:
     needs: [detect, terraform]
     if: needs.detect.outputs.env != 'none'
@@ -88,6 +95,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: hashicorp/setup-terraform@v3
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.detect.outputs.env }}
+          path: environments/${{ needs.detect.outputs.env }}
 
       - name: Terraform Apply
         working-directory: environments/${{ needs.detect.outputs.env }}
