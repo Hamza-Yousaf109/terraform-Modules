@@ -5,8 +5,9 @@ module "ec2" {
   instance_type  = "t3.medium"
   key_name       = "devops"
   name_prefix    = "test"
-  vpc_id         = "vpc-085084223c2826673"
-  subnet_id      = "subnet-075b4333d85bf1589"
+  vpc_id         = module.vpc.vpc_id
+  subnet_id      = module.vpc.subnet_id
+  depends_on = [ module.vpc ]
 }
 
 module "s3" {
