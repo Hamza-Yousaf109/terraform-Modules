@@ -16,15 +16,28 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect changed environment
         id: setenv
         run: |
-          if git diff --name-only HEAD^ HEAD | grep "environments/dev"; then
+          # Try to compare with previous commit, fallback if first commit
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            CHANGES=$(git diff --name-only HEAD^ HEAD)
+          else
+            # First commit - check all staged/committed files
+            CHANGES=$(git diff --name-only --cached HEAD)
+            if [ -z "$CHANGES" ]; then
+              CHANGES=$(git ls-files)
+            fi
+          fi
+          
+          if echo "$CHANGES" | grep -q "environments/dev"; then
             echo "env=dev" >> $GITHUB_OUTPUT
-          elif git diff --name-only HEAD^ HEAD | grep "environments/stag"; then
+          elif echo "$CHANGES" | grep -q "environments/stag"; then
             echo "env=stag" >> $GITHUB_OUTPUT
-          elif git diff --name-only HEAD^ HEAD | grep "environments/prod"; then
+          elif echo "$CHANGES" | grep -q "environments/prod"; then
             echo "env=prod" >> $GITHUB_OUTPUT
           else
             echo "env=none" >> $GITHUB_OUTPUT
