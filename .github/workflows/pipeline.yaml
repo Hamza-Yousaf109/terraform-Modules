@@ -1,0 +1,58 @@
+name: Terraform Multi-Environment CI
+
+on:
+  push:
+    paths:
+      - "environments/dev/**"
+      - "environments/stag/**"
+      - "environments/prod/**"
+
+jobs:
+
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.setenv.outputs.env }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed environment
+        id: setenv
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep "environments/dev"; then
+            echo "env=dev" >> $GITHUB_OUTPUT
+          elif git diff --name-only HEAD^ HEAD | grep "environments/stag"; then
+            echo "env=stag" >> $GITHUB_OUTPUT
+          elif git diff --name-only HEAD^ HEAD | grep "environments/prod"; then
+            echo "env=prod" >> $GITHUB_OUTPUT
+          else
+            echo "env=none" >> $GITHUB_OUTPUT
+          fi
+
+  terraform:
+    needs: detect
+    if: needs.detect.outputs.env != 'none'
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: environments/${{ needs.detect.outputs.env }}
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: environments/${{ needs.detect.outputs.env }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: environments/${{ needs.detect.outputs.env }}
+        run: terraform plan
