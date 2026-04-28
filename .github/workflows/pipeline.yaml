@@ -68,4 +68,27 @@ jobs:
 
       - name: Terraform Plan
         working-directory: environments/${{ needs.detect.outputs.env }}
-        run: terraform plan
+        run: terraform plan -out=tfplan
+
+  deploy:
+    needs: [detect, terraform]
+    if: needs.detect.outputs.env != 'none'
+    runs-on: ubuntu-latest
+    
+    environment:
+      name: ${{ needs.detect.outputs.env }}
+      url: https://console.aws.amazon.com
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Apply
+        working-directory: environments/${{ needs.detect.outputs.env }}
+        run: terraform apply -auto-approve tfplan
