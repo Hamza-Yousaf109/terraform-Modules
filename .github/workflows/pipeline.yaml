@@ -102,6 +102,10 @@ jobs:
           name: tfplan-${{ needs.detect.outputs.env }}
           path: environments/${{ needs.detect.outputs.env }}
 
+      - name: Terraform Init
+        working-directory: environments/${{ needs.detect.outputs.env }}
+        run: terraform init
+
       - name: Terraform Apply
         working-directory: environments/${{ needs.detect.outputs.env }}
         run: terraform apply -auto-approve tfplan
