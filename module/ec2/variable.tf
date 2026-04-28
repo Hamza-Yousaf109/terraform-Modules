@@ -24,3 +24,8 @@ variable "subnet_id" {
     type = string
     default = ""
 }
+variable "create_security_group" {
+    description = "Create a security group for the instances"
+    type = bool
+    default = true
+}

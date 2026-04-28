@@ -15,7 +15,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_security_group" "default" {
-  count  = var.vpc_id != "" ? 1 : 0
+  count  = var.create_security_group ? 1 : 0
   vpc_id = var.vpc_id
   name   = "${var.name_prefix}-sg"
 
@@ -44,7 +44,7 @@ resource "aws_instance" "app" {
   instance_type   = var.instance_type
   key_name        = var.key_name
   subnet_id       = var.subnet_id != "" ? var.subnet_id : null
-  vpc_security_group_ids = var.vpc_id != "" ? [aws_security_group.default[0].id] : null
+  vpc_security_group_ids = var.create_security_group ? [aws_security_group.default[0].id] : null
 
   tags = {
     Name = "${var.name_prefix}-${count.index + 1}"

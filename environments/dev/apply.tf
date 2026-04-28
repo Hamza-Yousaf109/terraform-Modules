@@ -1,13 +1,14 @@
 module "ec2" {
   source = "../../module/ec2"
 
-  instance_count = "1"
-  instance_type  = "t3.medium"
-  key_name       = "devops"
-  name_prefix    = "test"
-  vpc_id         = module.vpc.vpc_id
-  subnet_id      = module.vpc.subnet_id
-  depends_on = [ module.vpc ]
+  instance_count         = "1"
+  instance_type          = "t3.medium"
+  key_name               = "devops"
+  name_prefix            = "test"
+  vpc_id                 = module.vpc.vpc_id
+  subnet_id              = module.vpc.subnet_id
+  create_security_group  = true
+  depends_on             = [module.vpc]
 }
 
 module "s3" {
