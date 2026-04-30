@@ -1,7 +1,7 @@
 module "ec2" {
   source = "../../module/ec2"
 
-  instance_count         = "1"
+  instance_count         = 1
   instance_type          = "t3.medium"
   key_name               = "devops"
   name_prefix            = "test"

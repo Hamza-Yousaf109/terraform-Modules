@@ -108,6 +108,8 @@ pipeline {
                         terraform output -json > ../../tf_output.json || echo "{}" > ../../tf_output.json
 
                         echo "📦 Terraform output saved"
+                        echo "📋 Output content:"
+                        cat ../../tf_output.json | jq . || cat ../../tf_output.json
                     """
                 }
             }
@@ -120,12 +122,21 @@ pipeline {
             steps {
                 script {
                     sh """
+                        set -e
                         echo "🧠 Generating inventory..."
 
-                        python3 scripts/terraform_to_ansible.py \
+                        chmod +x scripts/terraform_to_ansible.sh
+                        
+                        # Debug: Show what we're passing to the script
+                        echo "Input file content:"
+                        jq . tf_output.json 2>/dev/null || cat tf_output.json
+                        
+                        bash scripts/terraform_to_ansible.sh \
                             tf_output.json \
                             ${INVENTORY_FILE}
 
+                        echo ""
+                        echo "Generated inventory:"
                         cat ${INVENTORY_FILE}
                     """
                 }
