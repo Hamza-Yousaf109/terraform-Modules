@@ -3,12 +3,13 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
+        TF_IN_AUTOMATION = 'true'
     }
 
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
         booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform changes')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible playbook')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible after Terraform')
     }
 
     stages {
@@ -29,6 +30,7 @@ pipeline {
             steps {
                 script {
                     if (params.ENVIRONMENT == 'auto-detect') {
+
                         def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
 
                         if (changes.contains('environments/dev')) {
@@ -40,6 +42,7 @@ pipeline {
                         } else {
                             env.DETECTED_ENV = 'dev'
                         }
+
                     } else {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
@@ -86,10 +89,36 @@ pipeline {
 
                 withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
+                        set -e
                         cd environments/${DETECTED_ENV}
                         terraform apply -auto-approve tfplan
                     '''
                 }
+            }
+        }
+
+        stage('Generate Ansible Inventory') {
+            when {
+                expression { params.RUN_ANSIBLE == true }
+            }
+            steps {
+                sh '''
+                    echo "🧠 Generating Ansible Inventory..."
+                    python3 scripts/terraform_to_ansible.py environments/${DETECTED_ENV} inventory/hosts.ini
+                    cat inventory/hosts.ini
+                '''
+            }
+        }
+
+        stage('Run Ansible') {
+            when {
+                expression { params.RUN_ANSIBLE == true }
+            }
+            steps {
+                sh '''
+                    echo "🚀 Running Ansible Playbook..."
+                    ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
+                '''
             }
         }
 
@@ -102,7 +131,7 @@ pipeline {
 
     post {
         success {
-            echo "🎉 SUCCESS: ${env.DETECTED_ENV} deployment done"
+            echo "🎉 SUCCESS: ${env.DETECTED_ENV} pipeline completed"
         }
         failure {
             echo "❌ FAILED pipeline"
