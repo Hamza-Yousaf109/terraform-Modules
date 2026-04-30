@@ -161,24 +161,25 @@ pipeline {
                         set -e
                         
                         # Count hosts under the jenkins_servers group
-                        HOST_COUNT=$(awk 'BEGIN {count=0; in_group=0} /^\[jenkins_servers\]/ {in_group=1; next} /^\[/ {in_group=0} in_group && /^[^#[:space:]]/ {count++} END {print count+0}' ${INVENTORY_FILE} 2>/dev/null)
-                        HOST_COUNT=${HOST_COUNT:-0}
+                        HOST_COUNT=\$(awk 'BEGIN {count=0; in_group=0} /^\[jenkins_servers\]/ {in_group=1; next} /^\[/ {in_group=0} in_group && /^[^#[:space:]]/ {count++} END {print count+0}' \${INVENTORY_FILE} 2>/dev/null)
+                        HOST_COUNT=\${HOST_COUNT:-0}
                         
-                        if [ "${HOST_COUNT}" = "" ] || [ "${HOST_COUNT}" -eq 0 ]; then
+                        if [ "\${HOST_COUNT}" = "" ] || [ "\${HOST_COUNT}" -eq 0 ]; then
                             echo "WARNING: No instances found in inventory"
                             echo "Make sure EC2 instances were created successfully"
                             echo "Inventory content:"
-                            cat ${INVENTORY_FILE}
+                            cat \${INVENTORY_FILE}
                             exit 1
                         fi
                         
-                        echo "Running Ansible on ${HOST_COUNT} host(s)..."
-                        ansible-playbook -i ${INVENTORY_FILE} ansible/playbook.yml
+                        echo "Running Ansible on \${HOST_COUNT} host(s)..."
+                        ansible-playbook -i \${INVENTORY_FILE} ansible/playbook.yml
                     """
                 }
             }
         }
-stage('Verify') {
+
+        stage('Verify') {
             steps {
                 echo "✅ Deployment completed for ${env.DETECTED_ENV}"
             }
