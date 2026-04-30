@@ -1,63 +1,46 @@
 ---
-- name: Install and Configure Jenkins on EC2
+- name: Install Docker on EC2
   hosts: jenkins_servers
   become: yes
-  
+
   tasks:
-    - name: Wait for SSH connection
-      wait_for_connection:
-        delay: 10
-        timeout: 300
-    
-    - name: Update package cache
+    - name: Update apt cache
       apt:
         update_cache: yes
-        cache_valid_time: 3600
-    
-    - name: Install Java
+
+    - name: Install required packages
       apt:
-        name: openjdk-11-jdk
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
         state: present
-    
-    - name: Add Jenkins repository key
+
+    - name: Add Docker GPG key
       apt_key:
-        url: https://pkg.jenkins.io/debian-stable/jenkins.io.key
+        url: https://download.docker.com/linux/ubuntu/gpg
         state: present
-    
-    - name: Add Jenkins repository
+
+    - name: Add Docker repo
       apt_repository:
-        repo: deb https://pkg.jenkins.io/debian-stable binary/
+        repo: deb https://download.docker.com/linux/ubuntu focal stable
         state: present
-    
-    - name: Update package cache again
+
+    - name: Install Docker
       apt:
-        update_cache: yes
-    
-    - name: Install Jenkins
-      apt:
-        name: jenkins
+        name: docker-ce
         state: present
-    
-    - name: Start Jenkins service
+
+    - name: Start Docker
       systemd:
-        name: jenkins
+        name: docker
         state: started
         enabled: yes
-    
-    - name: Wait for Jenkins to start
-      wait_for:
-        port: 8080
-        delay: 10
-        timeout: 300
-    
-    - name: Get Jenkins initial admin password
-      slurp:
-        src: /var/lib/jenkins/secrets/initialAdminPassword
-      register: jenkins_password
-    
-    - name: Display Jenkins URL and password
-      debug:
-        msg: |
-          ✓ Jenkins installed successfully!
-          URL: http://{{ ansible_host }}:8080
-          Initial Admin Password: {{ jenkins_password.content | b64decode }}
+
+    - name: Add ubuntu to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
