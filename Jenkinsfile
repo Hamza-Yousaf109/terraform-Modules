@@ -51,7 +51,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        withCredentials([aws(credentialsId: 'aws-creds', optional: true)]) {
+                        withCredentials([aws(credentialsId: 'aws-creds')]) {
                             sh "aws sts get-caller-identity"
                         }
                     } catch (err) {
@@ -64,7 +64,7 @@ pipeline {
         stage('Terraform Init & Plan') {
             steps {
                 script {
-                    withCredentials([aws(credentialsId: 'aws-creds', optional: true)]) {
+                    withCredentials([aws(credentialsId: 'aws-creds')]) {
                         sh """
                             set -e
                             cd ${TF_DIR}/${DETECTED_ENV}
@@ -93,7 +93,7 @@ pipeline {
             steps {
                 input message: "Apply Terraform for ${env.DETECTED_ENV}?"
                 script {
-                    withCredentials([aws(credentialsId: 'aws-creds', optional: true)]) {
+                    withCredentials([aws(credentialsId: 'aws-creds')]) {
                         sh """
                             cd ${TF_DIR}/${DETECTED_ENV}
                             terraform apply -auto-approve tfplan
