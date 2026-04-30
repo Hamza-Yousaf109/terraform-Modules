@@ -51,7 +51,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                        withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829', optional: true)]) {
                             sh "aws sts get-caller-identity"
                         }
                     } catch (err) {
