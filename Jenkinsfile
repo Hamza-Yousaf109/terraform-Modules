@@ -7,20 +7,18 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select Environment')
-        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform Changes')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible after deploy')
+        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible Playbook')
     }
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
                 checkout scm
-
                 script {
-                    env.COMMIT_MSG = sh(script: "git log -1 --format=%B", returnStdout: true).trim()
-                    echo "Commit: ${env.COMMIT_MSG}"
+                    echo "🔄 Repo checked out"
                 }
             }
         }
@@ -28,9 +26,7 @@ pipeline {
         stage('Detect Environment') {
             steps {
                 script {
-
                     if (params.ENVIRONMENT == 'auto-detect') {
-
                         def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
 
                         if (changes.contains('environments/dev')) {
@@ -42,12 +38,11 @@ pipeline {
                         } else {
                             env.DETECTED_ENV = 'dev'
                         }
-
                     } else {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    echo "🎯 Environment: ${env.DETECTED_ENV}"
+                    echo "🎯 ENV: ${env.DETECTED_ENV}"
                 }
             }
         }
@@ -60,7 +55,7 @@ pipeline {
             }
         }
 
-        stage('Terraform Init & Plan') {
+        stage('Terraform Init / Plan') {
             steps {
                 withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
@@ -79,9 +74,8 @@ pipeline {
             when {
                 expression { params.APPLY_TERRAFORM == true }
             }
-
             steps {
-                input message: "Apply Terraform for ${env.DETECTED_ENV}?"
+                input message: "Confirm Terraform Apply for ${env.DETECTED_ENV}"
 
                 withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
@@ -93,11 +87,10 @@ pipeline {
             }
         }
 
-        stage('Generate Terraform Output File') {
+        stage('Export Terraform Output') {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
-
             steps {
                 withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
@@ -105,7 +98,7 @@ pipeline {
                         cd environments/${DETECTED_ENV}
 
                         terraform output -json > /tmp/tf_output.json
-                        echo "Terraform output saved"
+                        echo "📦 Terraform output exported"
                     '''
                 }
             }
@@ -115,11 +108,14 @@ pipeline {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
-
             steps {
                 sh '''
-                    echo "🧠 Generating Inventory..."
-                    python3 scripts/terraform_to_ansible.py environments/${DETECTED_ENV} inventory/hosts.ini
+                    echo "🧠 Generating Ansible Inventory..."
+
+                    python3 scripts/terraform_to_ansible.py \
+                        /tmp/tf_output.json \
+                        inventory/hosts.ini
+
                     cat inventory/hosts.ini
                 '''
             }
@@ -129,10 +125,10 @@ pipeline {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
-
             steps {
                 sh '''
-                    echo "🚀 Running Ansible..."
+                    echo "🚀 Running Ansible Playbook..."
+
                     ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
                 '''
             }
@@ -140,14 +136,14 @@ pipeline {
 
         stage('Verify') {
             steps {
-                echo "✅ Deployment completed for ${env.DETECTED_ENV}"
+                echo "✅ Deployment successful for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: ${env.DETECTED_ENV} pipeline completed"
+            echo "🎉 SUCCESS: Pipeline completed for ${env.DETECTED_ENV}"
         }
 
         failure {
