@@ -15,10 +15,10 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
                 checkout scm
-                echo "🔄 Repo checked out"
+                echo "🔄 Code checked out"
             }
         }
 
@@ -88,6 +88,7 @@ pipeline {
 
                         terraform apply -auto-approve tfplan
 
+                        echo "📦 Exporting Terraform output..."
                         terraform output -json > tf_output.json
                     '''
                 }
@@ -108,7 +109,6 @@ pipeline {
                         environments/${DETECTED_ENV}/tf_output.json \
                         inventory/hosts.ini
 
-                    echo "📄 Inventory:"
                     cat inventory/hosts.ini
                 '''
             }
@@ -125,11 +125,11 @@ pipeline {
                     sh '''
                         set -e
 
-                        echo "🚀 Running Ansible..."
+                        export ANSIBLE_PRIVATE_KEY_FILE=$SSH_KEY
 
-                        ansible-playbook -i inventory/hosts.ini ansible/playbook.yml \
-                        --private-key $SSH_KEY \
-                        -u ubuntu
+                        echo "🚀 Running Ansible Playbook..."
+
+                        ansible-playbook -i inventory/hosts.ini ansible/playbook.yml -u ubuntu
                     '''
                 }
             }
@@ -137,18 +137,18 @@ pipeline {
 
         stage('Verify') {
             steps {
-                echo "✅ Deployment successful for ${env.DETECTED_ENV}"
+                echo "✅ Deployment completed successfully for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: Pipeline completed"
+            echo "🎉 SUCCESS: Full pipeline executed"
         }
 
         failure {
-            echo "❌ PIPELINE FAILED"
+            echo "❌ PIPELINE FAILED - check logs"
         }
     }
 }
