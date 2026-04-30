@@ -1,0 +1,63 @@
+---
+- name: Install and Configure Jenkins on EC2
+  hosts: jenkins_servers
+  become: yes
+  
+  tasks:
+    - name: Wait for SSH connection
+      wait_for_connection:
+        delay: 10
+        timeout: 300
+    
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Install Java
+      apt:
+        name: openjdk-11-jdk
+        state: present
+    
+    - name: Add Jenkins repository key
+      apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io.key
+        state: present
+    
+    - name: Add Jenkins repository
+      apt_repository:
+        repo: deb https://pkg.jenkins.io/debian-stable binary/
+        state: present
+    
+    - name: Update package cache again
+      apt:
+        update_cache: yes
+    
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        state: present
+    
+    - name: Start Jenkins service
+      systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+    
+    - name: Wait for Jenkins to start
+      wait_for:
+        port: 8080
+        delay: 10
+        timeout: 300
+    
+    - name: Get Jenkins initial admin password
+      slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_password
+    
+    - name: Display Jenkins URL and password
+      debug:
+        msg: |
+          ✓ Jenkins installed successfully!
+          URL: http://{{ ansible_host }}:8080
+          Initial Admin Password: {{ jenkins_password.content | b64decode }}
