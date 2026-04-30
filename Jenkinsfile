@@ -3,54 +3,47 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        TERRAFORM_VERSION = '1.5.0'
-
-        // FIX: must NOT use sh() here
-        GIT_COMMIT_MSG = ''
     }
 
     parameters {
-        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment (auto-detect reads from git changes)')
+        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
         booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform changes')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible playbook after Terraform')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible playbook')
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                echo '🔄 Checking out code...'
+                echo "🔄 Checkout code"
                 checkout scm
-                sh 'git log --oneline -1'
 
                 script {
-                    // FIXED PLACE: sh() moved here
                     env.GIT_COMMIT_MSG = sh(
-                        script: "git log -1 --format=%B",
+                        script: "git log -1 --format=%B || echo 'no commit'",
                         returnStdout: true
                     ).trim()
 
-                    echo "Commit Message: ${env.GIT_COMMIT_MSG}"
+                    echo "Commit: ${env.GIT_COMMIT_MSG}"
                 }
             }
         }
 
         stage('Detect Environment') {
             steps {
-                echo '🔍 Detecting changed environment...'
                 script {
                     if (params.ENVIRONMENT == 'auto-detect') {
 
-                        def changedFiles = sh(
-                            script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || git ls-files",
+                        def changes = sh(
+                            script: "git diff --name-only HEAD~1..HEAD || true",
                             returnStdout: true
                         ).trim()
 
-                        if (changedFiles.contains('environments/dev')) {
+                        if (changes.contains('environments/dev')) {
                             env.DETECTED_ENV = 'dev'
-                        } else if (changedFiles.contains('environments/stag')) {
+                        } else if (changes.contains('environments/stag')) {
                             env.DETECTED_ENV = 'stag'
-                        } else if (changedFiles.contains('environments/prod')) {
+                        } else if (changes.contains('environments/prod')) {
                             env.DETECTED_ENV = 'prod'
                         } else {
                             env.DETECTED_ENV = 'dev'
@@ -60,42 +53,33 @@ pipeline {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    echo "════════════════════════════"
                     echo "Target Environment: ${env.DETECTED_ENV}"
-                    echo "════════════════════════════"
                 }
             }
         }
 
-        stage('AWS Credentials Check') {
+        stage('AWS Auth Check') {
             steps {
-                echo '🔐 Configuring AWS credentials...'
+                echo "🔐 Checking AWS credentials"
 
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
+                ]]) {
                     sh '''
-                        aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
-                        aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
-                        aws configure set region "$AWS_REGION"
-
                         aws sts get-caller-identity
                     '''
                 }
             }
         }
 
-        stage('Terraform Validate') {
+        stage('Terraform Init & Plan') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
+                ]]) {
                     sh '''
-                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-
                         cd environments/${DETECTED_ENV}
 
                         terraform init
@@ -111,16 +95,13 @@ pipeline {
                 expression { params.APPLY_TERRAFORM == true }
             }
             steps {
-                input message: "Approve Terraform apply for ${env.DETECTED_ENV}?", ok: "YES"
+                input message: "Apply Terraform for ${env.DETECTED_ENV}?", ok: "YES"
 
-                withCredentials([
-                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
-                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
-                ]) {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
+                ]]) {
                     sh '''
-                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-
                         cd environments/${DETECTED_ENV}
 
                         terraform apply -auto-approve tfplan
@@ -152,7 +133,7 @@ pipeline {
             steps {
                 sh '''
                     sudo apt update -y || true
-                    sudo apt install ansible -y || true
+                    sudo apt install -y ansible || true
                     ansible --version
                 '''
             }
@@ -194,14 +175,14 @@ pipeline {
 
         stage('Verify') {
             steps {
-                echo "Deployment completed for ${env.DETECTED_ENV}"
+                echo "✅ Deployment completed for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "✅ SUCCESS: ${env.DETECTED_ENV}"
+            echo "🎉 SUCCESS: ${env.DETECTED_ENV}"
         }
         failure {
             echo "❌ FAILED pipeline"
