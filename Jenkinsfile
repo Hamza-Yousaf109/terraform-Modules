@@ -3,15 +3,20 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        TF_DIR = "environments/dev"
+        TF_IN_AUTOMATION = 'true'
+
+        // 🔥 IMPORTANT: single source of truth for credentials
+        AWS_CREDS_ID = 'aws-creds'
+
+        TF_DIR = ""
+        TF_OUTPUT_FILE = "/tmp/tf_output.json"
         INVENTORY_FILE = "inventory/hosts.ini"
-        TF_OUTPUT_FILE = "tf_output.json"
     }
 
     parameters {
-        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'])
-        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: true)
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: true)
+        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: true, description: 'Apply Terraform')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: true, description: 'Run Ansible Playbook')
     }
 
     stages {
@@ -19,35 +24,51 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "🔄 Repo checked out"
+                echo "🔄 Repository checked out"
             }
         }
 
         stage('Detect Environment') {
             steps {
                 script {
-                    env.DETECTED_ENV = (params.ENVIRONMENT == 'auto-detect') ? 'dev' : params.ENVIRONMENT
+                    if (params.ENVIRONMENT == 'auto-detect') {
+                        def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
+
+                        if (changes.contains('environments/prod')) {
+                            env.DETECTED_ENV = 'prod'
+                        } else if (changes.contains('environments/stag')) {
+                            env.DETECTED_ENV = 'stag'
+                        } else {
+                            env.DETECTED_ENV = 'dev'
+                        }
+                    } else {
+                        env.DETECTED_ENV = params.ENVIRONMENT
+                    }
+
                     env.TF_DIR = "environments/${env.DETECTED_ENV}"
-                    echo "🎯 ENV: ${env.DETECTED_ENV}"
+
+                    echo "🎯 Selected Environment: ${env.DETECTED_ENV}"
                 }
             }
         }
 
-        stage('AWS Auth Check') {
+        stage('AWS Authentication') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-creds')]) {
+                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
                     sh "aws sts get-caller-identity"
                 }
             }
         }
 
-        stage('Terraform Init / Plan') {
+        stage('Terraform Init & Plan') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-creds')]) {
+                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
                     sh '''
                         set -e
                         cd $TF_DIR
-                        terraform init -reconfigure
+
+                        terraform init -reconfigure -input=false
+                        terraform validate
                         terraform plan -out=tfplan
                     '''
                 }
@@ -59,10 +80,13 @@ pipeline {
                 expression { params.APPLY_TERRAFORM }
             }
             steps {
-                input message: "Apply Terraform?"
-                withCredentials([aws(credentialsId: 'aws-creds')]) {
+                input message: "Confirm Terraform Apply for ${env.DETECTED_ENV}"
+
+                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
                     sh '''
+                        set -e
                         cd $TF_DIR
+
                         terraform apply -auto-approve tfplan
                     '''
                 }
@@ -71,11 +95,15 @@ pipeline {
 
         stage('Export Terraform Output') {
             steps {
-                withCredentials([aws(credentialsId: 'aws-creds')]) {
+                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
                     sh '''
+                        set -e
                         cd $TF_DIR
-                        terraform output -json > ../../$TF_OUTPUT_FILE
-                        cat ../../$TF_OUTPUT_FILE
+
+                        terraform output -json > $TF_OUTPUT_FILE
+
+                        echo "📦 Terraform output generated"
+                        cat $TF_OUTPUT_FILE
                     '''
                 }
             }
@@ -84,30 +112,45 @@ pipeline {
         stage('Generate Ansible Inventory') {
             steps {
                 sh '''
-                    python3 scripts/terraform_to_ansible.py tf_output.json inventory/hosts.ini
-                    cat inventory/hosts.ini
+                    echo "🧠 Generating inventory..."
+
+                    python3 scripts/terraform_to_ansible.py \
+                        $TF_OUTPUT_FILE \
+                        $INVENTORY_FILE
+
+                    echo "📄 Inventory file:"
+                    cat $INVENTORY_FILE
                 '''
             }
         }
 
-        stage('Run Ansible') {
+        stage('Run Ansible Playbook') {
             when {
                 expression { params.RUN_ANSIBLE }
             }
             steps {
                 sh '''
-                    ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
+                    echo "🚀 Running Ansible Playbook..."
+
+                    ansible-playbook -i $INVENTORY_FILE ansible/playbook.yml
                 '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                echo "✅ Deployment completed successfully for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: ${env.DETECTED_ENV} deployed"
+            echo "🎉 SUCCESS: ${env.DETECTED_ENV} pipeline completed"
         }
+
         failure {
-            echo "❌ PIPELINE FAILED"
+            echo "❌ PIPELINE FAILED - check logs"
         }
     }
 }
