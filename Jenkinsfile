@@ -7,21 +7,20 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
-        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform changes')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible after Terraform')
+        choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select Environment')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform Changes')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible after deploy')
     }
 
     stages {
 
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                echo "🔄 Cloning repository..."
                 checkout scm
 
                 script {
                     env.COMMIT_MSG = sh(script: "git log -1 --format=%B", returnStdout: true).trim()
-                    echo "Commit Message: ${env.COMMIT_MSG}"
+                    echo "Commit: ${env.COMMIT_MSG}"
                 }
             }
         }
@@ -29,6 +28,7 @@ pipeline {
         stage('Detect Environment') {
             steps {
                 script {
+
                     if (params.ENVIRONMENT == 'auto-detect') {
 
                         def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
@@ -47,7 +47,7 @@ pipeline {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    echo "🎯 Target Environment: ${env.DETECTED_ENV}"
+                    echo "🎯 Environment: ${env.DETECTED_ENV}"
                 }
             }
         }
@@ -67,13 +67,8 @@ pipeline {
                         set -e
                         cd environments/${DETECTED_ENV}
 
-                        echo "🚀 Terraform Init"
                         terraform init -reconfigure -input=false
-
-                        echo "🔍 Validate"
                         terraform validate
-
-                        echo "📦 Plan"
                         terraform plan -out=tfplan
                     '''
                 }
@@ -84,6 +79,7 @@ pipeline {
             when {
                 expression { params.APPLY_TERRAFORM == true }
             }
+
             steps {
                 input message: "Apply Terraform for ${env.DETECTED_ENV}?"
 
@@ -97,26 +93,46 @@ pipeline {
             }
         }
 
+        stage('Generate Terraform Output File') {
+            when {
+                expression { params.RUN_ANSIBLE == true }
+            }
+
+            steps {
+                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                    sh '''
+                        set -e
+                        cd environments/${DETECTED_ENV}
+
+                        terraform output -json > /tmp/tf_output.json
+                        echo "Terraform output saved"
+                    '''
+                }
+            }
+        }
+
         stage('Generate Ansible Inventory') {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
+
             steps {
                 sh '''
-                    echo "🧠 Generating Ansible Inventory..."
+                    echo "🧠 Generating Inventory..."
                     python3 scripts/terraform_to_ansible.py environments/${DETECTED_ENV} inventory/hosts.ini
                     cat inventory/hosts.ini
                 '''
             }
         }
 
-        stage('Run Ansible') {
+        stage('Run Ansible Playbook') {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
+
             steps {
                 sh '''
-                    echo "🚀 Running Ansible Playbook..."
+                    echo "🚀 Running Ansible..."
                     ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
                 '''
             }
@@ -133,8 +149,9 @@ pipeline {
         success {
             echo "🎉 SUCCESS: ${env.DETECTED_ENV} pipeline completed"
         }
+
         failure {
-            echo "❌ FAILED pipeline"
+            echo "❌ PIPELINE FAILED"
         }
     }
 }
