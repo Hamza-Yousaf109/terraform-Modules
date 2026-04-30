@@ -10,7 +10,7 @@ pipeline {
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
         booleanParam(name: 'APPLY_TERRAFORM', defaultValue: true, description: 'Apply Terraform')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: true, description: 'Run Ansible Playbook')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: true, description: 'Run Ansible')
     }
 
     stages {
@@ -64,7 +64,7 @@ pipeline {
                         echo "🔧 Terraform Init..."
                         terraform init -reconfigure -input=false
 
-                        echo "✔️ Validate..."
+                        echo "✔ Validate..."
                         terraform validate
 
                         echo "📋 Plan..."
@@ -88,28 +88,7 @@ pipeline {
 
                         terraform apply -auto-approve tfplan
 
-                        echo "📤 Saving terraform output..."
                         terraform output -json > tf_output.json
-                    '''
-                }
-            }
-        }
-
-        stage('Export Terraform Output') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                withCredentials([aws(credentialsId: "${AWS_CREDS}")]) {
-                    sh '''
-                        set -e
-                        cd environments/${DETECTED_ENV}
-
-                        echo "📦 Exporting Terraform output..."
-                        terraform output -json > tf_output.json
-
-                        echo "📋 Output Preview:"
-                        cat tf_output.json | jq .
                     '''
                 }
             }
@@ -140,25 +119,19 @@ pipeline {
                 expression { params.RUN_ANSIBLE == true }
             }
             steps {
-                sh '''
-                    set -e
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'ec2-key', keyFileVariable: 'SSH_KEY')
+                ]) {
+                    sh '''
+                        set -e
 
-                    HOST_COUNT=$(awk '
-                        BEGIN {count=0; in_group=0}
-                        /^\\[jenkins_servers\\]/ {in_group=1; next}
-                        /^\\[/ {in_group=0}
-                        in_group && /^[^#[:space:]]/ {count++}
-                        END {print count+0}
-                    ' inventory/hosts.ini)
+                        echo "🚀 Running Ansible..."
 
-                    if [ "$HOST_COUNT" -eq 0 ]; then
-                        echo "❌ No hosts found in inventory"
-                        exit 1
-                    fi
-
-                    echo "🚀 Running Ansible..."
-                    ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
-                '''
+                        ansible-playbook -i inventory/hosts.ini ansible/playbook.yml \
+                        --private-key $SSH_KEY \
+                        -u ubuntu
+                    '''
+                }
             }
         }
 
@@ -173,8 +146,9 @@ pipeline {
         success {
             echo "🎉 SUCCESS: Pipeline completed"
         }
+
         failure {
-            echo "❌ PIPELINE FAILED - Check logs"
+            echo "❌ PIPELINE FAILED"
         }
     }
 }
