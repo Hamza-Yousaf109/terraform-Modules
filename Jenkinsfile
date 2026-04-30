@@ -105,7 +105,7 @@ pipeline {
 
         stage('Export Terraform Output') {
             when {
-                expression { params.RUN_ANSIBLE == true }
+                expression { params.RUN_ANSIBLE == true && params.APPLY_TERRAFORM == true }
             }
             steps {
                 script {
@@ -125,7 +125,7 @@ pipeline {
 
         stage('Generate Ansible Inventory') {
             when {
-                expression { params.RUN_ANSIBLE == true }
+                expression { params.RUN_ANSIBLE == true && params.APPLY_TERRAFORM == true }
             }
             steps {
                 script {
@@ -151,34 +151,34 @@ pipeline {
             }
         }
 
-        stage('Run Ansible Playbook') {
+                stage('Run Ansible Playbook') {
             when {
-                expression { params.RUN_ANSIBLE == true }
+                expression { params.RUN_ANSIBLE == true && params.APPLY_TERRAFORM == true }
             }
             steps {
                 script {
                     sh """
                         set -e
                         
-                        # Check if inventory has any hosts
-                        HOST_COUNT=\$(grep -c '^test-' ${INVENTORY_FILE} || echo 0)
+                        # Count hosts under the jenkins_servers group
+                        HOST_COUNT=$(awk 'BEGIN {count=0; in_group=0} /^\[jenkins_servers\]/ {in_group=1; next} /^\[/ {in_group=0} in_group && /^[^#[:space:]]/ {count++} END {print count+0}' ${INVENTORY_FILE} 2>/dev/null)
+                        HOST_COUNT=${HOST_COUNT:-0}
                         
-                        if [ "\$HOST_COUNT" -eq 0 ]; then
-                            echo "⚠️  WARNING: No instances found in inventory"
+                        if [ "${HOST_COUNT}" = "" ] || [ "${HOST_COUNT}" -eq 0 ]; then
+                            echo "WARNING: No instances found in inventory"
                             echo "Make sure EC2 instances were created successfully"
                             echo "Inventory content:"
                             cat ${INVENTORY_FILE}
                             exit 1
                         fi
                         
-                        echo "🚀 Running Ansible on \$HOST_COUNT host(s)..."
+                        echo "Running Ansible on ${HOST_COUNT} host(s)..."
                         ansible-playbook -i ${INVENTORY_FILE} ansible/playbook.yml
                     """
                 }
             }
         }
-
-        stage('Verify') {
+stage('Verify') {
             steps {
                 echo "✅ Deployment completed for ${env.DETECTED_ENV}"
             }
