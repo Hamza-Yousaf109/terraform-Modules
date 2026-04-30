@@ -69,9 +69,17 @@ pipeline {
                             set -e
                             cd ${TF_DIR}/${DETECTED_ENV}
 
+                            echo "🔧 Initializing Terraform..."
                             terraform init -reconfigure -input=false
+                            
+                            echo "✔️ Validating configuration..."
                             terraform validate
+                            
+                            echo "📋 Running terraform plan..."
                             terraform plan -out=tfplan
+                            
+                            echo "📊 Checking available outputs..."
+                            terraform output -json | jq 'keys' || true
                         """
                     }
                 }
@@ -150,8 +158,20 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "🚀 Running Ansible..."
-
+                        set -e
+                        
+                        # Check if inventory has any hosts
+                        HOST_COUNT=\$(grep -c '^test-' ${INVENTORY_FILE} || echo 0)
+                        
+                        if [ "\$HOST_COUNT" -eq 0 ]; then
+                            echo "⚠️  WARNING: No instances found in inventory"
+                            echo "Make sure EC2 instances were created successfully"
+                            echo "Inventory content:"
+                            cat ${INVENTORY_FILE}
+                            exit 1
+                        fi
+                        
+                        echo "🚀 Running Ansible on \$HOST_COUNT host(s)..."
                         ansible-playbook -i ${INVENTORY_FILE} ansible/playbook.yml
                     """
                 }

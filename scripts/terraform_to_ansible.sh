@@ -28,11 +28,32 @@ if ! command -v jq &> /dev/null; then
     exit 1
 fi
 
-# Debug: Show raw output structure
 echo "📍 Processing Terraform output..."
+echo "Input file: $INPUT_FILE"
+echo "Output file: $OUTPUT_FILE"
 
-# Try to extract instances - handle both terraform output formats
+# Debug: Show raw output structure
+echo ""
+echo "🔍 Available keys in terraform output:"
+jq 'keys' "$INPUT_FILE" 2>/dev/null || echo "Failed to parse JSON"
+
+echo ""
+echo "🔍 Full terraform output:"
+jq '.' "$INPUT_FILE" 2>/dev/null || cat "$INPUT_FILE"
+
+# Try multiple methods to extract instances
+echo ""
+echo "🔎 Attempting to extract instances..."
+
+# Method 1: Direct path
 INSTANCES=$(jq -r '.instances_with_ssh.value.instances[]? | select(. != null) | "\(.name) ansible_host=\(.ansible_host) ansible_user=\(.ansible_user)"' "$INPUT_FILE" 2>/dev/null || echo "")
+
+if [ -z "$INSTANCES" ]; then
+    echo "⚠️  Method 1 failed, trying alternative paths..."
+    
+    # Method 2: Check if instances_with_ssh exists at root level
+    INSTANCES=$(jq -r '.instances_with_ssh[0].instances[]? | select(. != null) | "\(.name) ansible_host=\(.ansible_host) ansible_user=\(.ansible_user)"' "$INPUT_FILE" 2>/dev/null || echo "")
+fi
 
 # Generate inventory file
 {
@@ -42,6 +63,7 @@ INSTANCES=$(jq -r '.instances_with_ssh.value.instances[]? | select(. != null) | 
     
     if [ -z "$INSTANCES" ]; then
         echo "# ⚠️  No instances found in terraform output"
+        echo "# Check terraform apply output to verify instances were created"
     else
         echo "$INSTANCES"
     fi
@@ -55,4 +77,5 @@ INSTANCES=$(jq -r '.instances_with_ssh.value.instances[]? | select(. != null) | 
     
 } > "$OUTPUT_FILE"
 
-echo "✅ Inventory generated successfully at $OUTPUT_FILE"
+echo ""
+echo "✅ Inventory generated at $OUTPUT_FILE"
