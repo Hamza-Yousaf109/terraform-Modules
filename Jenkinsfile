@@ -3,13 +3,15 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        TF_IN_AUTOMATION = 'true'
+        TF_DIR = "environments/dev"
+        INVENTORY_FILE = "inventory/hosts.ini"
+        TF_OUTPUT_FILE = "tf_output.json"
     }
 
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
-        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform')
-        booleanParam(name: 'RUN_ANSIBLE', defaultValue: false, description: 'Run Ansible Playbook')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: true, description: 'Apply Terraform changes')
+        booleanParam(name: 'RUN_ANSIBLE', defaultValue: true, description: 'Run Ansible playbook')
     }
 
     stages {
@@ -17,9 +19,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                script {
-                    echo "🔄 Repo checked out"
-                }
+                echo "🔄 Repo checked out"
             }
         }
 
@@ -42,112 +42,96 @@ pipeline {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    echo "🎯 ENV: ${env.DETECTED_ENV}"
+                    env.TF_DIR = "environments/${env.DETECTED_ENV}"
+                    echo "🎯 Environment: ${env.DETECTED_ENV}"
                 }
             }
         }
 
-        stage('AWS Auth Check') {
+        stage('AWS Auth') {
             steps {
-                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                withCredentials([aws(credentialsId: 'aws-creds')]) {
                     sh "aws sts get-caller-identity"
                 }
             }
         }
 
-        stage('Terraform Init / Plan') {
+        stage('Terraform Init/Plan/Apply') {
             steps {
-                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                withCredentials([aws(credentialsId: 'aws-creds')]) {
                     sh '''
                         set -e
-                        cd environments/${DETECTED_ENV}
+                        cd $TF_DIR
 
                         terraform init -reconfigure -input=false
                         terraform validate
                         terraform plan -out=tfplan
                     '''
                 }
-            }
-        }
 
-        stage('Terraform Apply') {
-            when {
-                expression { params.APPLY_TERRAFORM == true }
-            }
-            steps {
-                input message: "Confirm Terraform Apply for ${env.DETECTED_ENV}"
+                script {
+                    if (params.APPLY_TERRAFORM) {
+                        input message: "Apply Terraform for ${env.DETECTED_ENV}?"
 
-                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
-                    sh '''
-                        set -e
-                        cd environments/${DETECTED_ENV}
-                        terraform apply -auto-approve tfplan
-                    '''
+                        withCredentials([aws(credentialsId: 'aws-creds')]) {
+                            sh '''
+                                set -e
+                                cd $TF_DIR
+                                terraform apply -auto-approve tfplan
+                            '''
+                        }
+                    }
                 }
             }
         }
 
-        stage('Export Terraform Output') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
+        stage('Export Terraform Output (FIXED)') {
             steps {
-                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                withCredentials([aws(credentialsId: 'aws-creds')]) {
                     sh '''
                         set -e
-                        cd environments/${DETECTED_ENV}
+                        cd $TF_DIR
 
-                        terraform output -json > /tmp/tf_output.json
-                        echo "📦 Terraform output exported"
+                        terraform output -json > ../../$TF_OUTPUT_FILE
+
+                        echo "📦 Terraform output saved to file"
+                        cat ../../$TF_OUTPUT_FILE
                     '''
                 }
             }
         }
 
         stage('Generate Ansible Inventory') {
+            steps {
+                sh '''
+                    echo "🧠 Generating Inventory..."
+                    python3 scripts/terraform_to_ansible.py $TF_OUTPUT_FILE $INVENTORY_FILE
+
+                    echo "📄 Inventory:"
+                    cat $INVENTORY_FILE
+                '''
+            }
+        }
+
+        stage('Run Ansible') {
             when {
                 expression { params.RUN_ANSIBLE == true }
             }
             steps {
                 sh '''
-                    echo "🧠 Generating Ansible Inventory..."
-
-                    python3 scripts/terraform_to_ansible.py \
-                        /tmp/tf_output.json \
-                        inventory/hosts.ini
-
-                    cat inventory/hosts.ini
+                    echo "🚀 Running Ansible..."
+                    ansible-playbook -i $INVENTORY_FILE ansible/playbook.yml
                 '''
-            }
-        }
-
-        stage('Run Ansible Playbook') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                sh '''
-                    echo "🚀 Running Ansible Playbook..."
-
-                    ansible-playbook -i inventory/hosts.ini ansible/playbook.yml
-                '''
-            }
-        }
-
-        stage('Verify') {
-            steps {
-                echo "✅ Deployment successful for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: Pipeline completed for ${env.DETECTED_ENV}"
+            echo "🎉 SUCCESS: ${env.DETECTED_ENV} deployed"
         }
-
         failure {
-            echo "❌ PIPELINE FAILED"
+            echo "❌ FAILED pipeline"
         }
     }
 }
