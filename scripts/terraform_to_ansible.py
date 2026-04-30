@@ -1,13 +1,10 @@
-#!/usr/bin/env python3
-
 import json
 import sys
 from pathlib import Path
 
 def main():
-
     if len(sys.argv) < 3:
-        print("Usage: python3 terraform_to_ansible.py <tf-output.json> <output-file>")
+        print("Usage: python3 terraform_to_ansible.py <input-json> <output-file>")
         sys.exit(1)
 
     input_file = sys.argv[1]
@@ -17,29 +14,26 @@ def main():
         with open(input_file, "r") as f:
             outputs = json.load(f)
 
-        inventory = []
-        inventory.append("# Auto generated inventory")
-        inventory.append("")
-        inventory.append("[jenkins_servers]")
+        inventory_lines = ["# Auto-generated inventory", ""]
+        inventory_lines.append("[jenkins_servers]")
 
-        # Example structure safe parsing
-        if "instances_with_ssh" in outputs:
-            instances = outputs["instances_with_ssh"]["value"].get("instances", [])
+        instances = outputs.get("instances_with_ssh", {}).get("instances", [])
 
-            for i in instances:
-                inventory.append(
-                    f"{i['name']} ansible_host={i['ansible_host']} ansible_user={i['ansible_user']}"
-                )
+        for instance in instances:
+            line = f"{instance['name']} ansible_host={instance['ansible_host']} ansible_user={instance['ansible_user']}"
+            inventory_lines.append(line)
 
-        inventory.append("")
-        inventory.append("[jenkins_servers:vars]")
-        inventory.append("ansible_python_interpreter=/usr/bin/python3")
-        inventory.append("ansible_connection=ssh")
+        inventory_lines.append("")
+        inventory_lines.append("[jenkins_servers:vars]")
+        inventory_lines.append("ansible_python_interpreter=/usr/bin/python3")
+        inventory_lines.append("ansible_connection=ssh")
+        inventory_lines.append("ansible_port=22")
+        inventory_lines.append("ansible_ssh_common_args='-o StrictHostKeyChecking=no'")
 
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_file, "w") as f:
-            f.write("\n".join(inventory))
+            f.write("\n".join(inventory_lines))
 
         print("Inventory generated successfully")
 
