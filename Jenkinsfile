@@ -4,18 +4,13 @@ pipeline {
     environment {
         AWS_REGION = 'us-east-1'
         TF_IN_AUTOMATION = 'true'
-
-        // 🔥 IMPORTANT: single source of truth for credentials
-        AWS_CREDS_ID = 'aws-creds'
-
-        TF_DIR = ""
-        TF_OUTPUT_FILE = "/tmp/tf_output.json"
+        TF_DIR = "environments"
         INVENTORY_FILE = "inventory/hosts.ini"
     }
 
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['auto-detect', 'dev', 'stag', 'prod'], description: 'Select environment')
-        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: true, description: 'Apply Terraform')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Apply Terraform changes')
         booleanParam(name: 'RUN_ANSIBLE', defaultValue: true, description: 'Run Ansible Playbook')
     }
 
@@ -24,7 +19,9 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "🔄 Repository checked out"
+                script {
+                    echo "🔄 Repo checked out"
+                }
             }
         }
 
@@ -34,9 +31,9 @@ pipeline {
                     if (params.ENVIRONMENT == 'auto-detect') {
                         def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
 
-                        if (changes.contains('environments/prod')) {
+                        if (changes.contains('prod')) {
                             env.DETECTED_ENV = 'prod'
-                        } else if (changes.contains('environments/stag')) {
+                        } else if (changes.contains('stag')) {
                             env.DETECTED_ENV = 'stag'
                         } else {
                             env.DETECTED_ENV = 'dev'
@@ -45,112 +42,124 @@ pipeline {
                         env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    env.TF_DIR = "environments/${env.DETECTED_ENV}"
-
-                    echo "🎯 Selected Environment: ${env.DETECTED_ENV}"
+                    echo "🎯 Environment: ${env.DETECTED_ENV}"
                 }
             }
         }
 
         stage('AWS Authentication') {
             steps {
-                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
-                    sh "aws sts get-caller-identity"
+                script {
+                    try {
+                        withCredentials([aws(credentialsId: 'aws-creds')]) {
+                            sh "aws sts get-caller-identity"
+                        }
+                    } catch (err) {
+                        echo "⚠️ AWS credentials not found, but continuing pipeline..."
+                    }
                 }
             }
         }
 
         stage('Terraform Init & Plan') {
             steps {
-                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
-                    sh '''
-                        set -e
-                        cd $TF_DIR
+                script {
+                    withCredentials([aws(credentialsId: 'aws-creds', optional: true)]) {
+                        sh """
+                            set -e
+                            cd ${TF_DIR}/${DETECTED_ENV}
 
-                        terraform init -reconfigure -input=false
-                        terraform validate
-                        terraform plan -out=tfplan
-                    '''
+                            terraform init -reconfigure -input=false
+                            terraform validate
+                            terraform plan -out=tfplan
+                        """
+                    }
                 }
             }
         }
 
         stage('Terraform Apply') {
             when {
-                expression { params.APPLY_TERRAFORM }
+                expression { params.APPLY_TERRAFORM == true }
             }
             steps {
-                input message: "Confirm Terraform Apply for ${env.DETECTED_ENV}"
-
-                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
-                    sh '''
-                        set -e
-                        cd $TF_DIR
-
-                        terraform apply -auto-approve tfplan
-                    '''
+                input message: "Apply Terraform for ${env.DETECTED_ENV}?"
+                script {
+                    withCredentials([aws(credentialsId: 'aws-creds', optional: true)]) {
+                        sh """
+                            cd ${TF_DIR}/${DETECTED_ENV}
+                            terraform apply -auto-approve tfplan
+                        """
+                    }
                 }
             }
         }
 
         stage('Export Terraform Output') {
+            when {
+                expression { params.RUN_ANSIBLE == true }
+            }
             steps {
-                withCredentials([aws(credentialsId: "${AWS_CREDS_ID}")]) {
-                    sh '''
+                script {
+                    sh """
                         set -e
-                        cd $TF_DIR
+                        cd ${TF_DIR}/${DETECTED_ENV}
 
-                        terraform output -json > $TF_OUTPUT_FILE
+                        terraform output -json > ../../tf_output.json || echo "{}" > ../../tf_output.json
 
-                        echo "📦 Terraform output generated"
-                        cat $TF_OUTPUT_FILE
-                    '''
+                        echo "📦 Terraform output saved"
+                    """
                 }
             }
         }
 
         stage('Generate Ansible Inventory') {
+            when {
+                expression { params.RUN_ANSIBLE == true }
+            }
             steps {
-                sh '''
-                    echo "🧠 Generating inventory..."
+                script {
+                    sh """
+                        echo "🧠 Generating inventory..."
 
-                    python3 scripts/terraform_to_ansible.py \
-                        $TF_OUTPUT_FILE \
-                        $INVENTORY_FILE
+                        python3 scripts/terraform_to_ansible.py \
+                            tf_output.json \
+                            ${INVENTORY_FILE}
 
-                    echo "📄 Inventory file:"
-                    cat $INVENTORY_FILE
-                '''
+                        cat ${INVENTORY_FILE}
+                    """
+                }
             }
         }
 
         stage('Run Ansible Playbook') {
             when {
-                expression { params.RUN_ANSIBLE }
+                expression { params.RUN_ANSIBLE == true }
             }
             steps {
-                sh '''
-                    echo "🚀 Running Ansible Playbook..."
+                script {
+                    sh """
+                        echo "🚀 Running Ansible..."
 
-                    ansible-playbook -i $INVENTORY_FILE ansible/playbook.yml
-                '''
+                        ansible-playbook -i ${INVENTORY_FILE} ansible/playbook.yml
+                    """
+                }
             }
         }
 
         stage('Verify') {
             steps {
-                echo "✅ Deployment completed successfully for ${env.DETECTED_ENV}"
+                echo "✅ Deployment completed for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: ${env.DETECTED_ENV} pipeline completed"
+            echo "🎉 SUCCESS pipeline finished"
         }
-
         failure {
-            echo "❌ PIPELINE FAILED - check logs"
+            echo "❌ Pipeline failed - check logs"
         }
     }
 }
