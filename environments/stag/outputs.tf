@@ -23,7 +23,7 @@ output "vpc_id" {
   value       = module.vpc.vpc_id
 }
 
-output "s3_bucket_name" {
-  description = "S3 bucket name"
-  value       = module.s3.bucket_name
+output "s3_bucket_id" {
+  description = "S3 bucket ID"
+  value       = module.s3.bucket_id
 }
