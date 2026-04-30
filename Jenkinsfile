@@ -2,8 +2,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = 'ca-central-1'
-        TF_IN_AUTOMATION = 'true'
+        AWS_REGION = 'us-east-1'
     }
 
     parameters {
@@ -20,8 +19,8 @@ pipeline {
                 checkout scm
 
                 script {
-                    env.GIT_MSG = sh(script: "git log -1 --format=%B", returnStdout: true).trim()
-                    echo "Commit Message: ${env.GIT_MSG}"
+                    env.COMMIT_MSG = sh(script: "git log -1 --format=%B", returnStdout: true).trim()
+                    echo "Commit Message: ${env.COMMIT_MSG}"
                 }
             }
         }
@@ -30,48 +29,40 @@ pipeline {
             steps {
                 script {
                     if (params.ENVIRONMENT == 'auto-detect') {
-
                         def changes = sh(script: "git diff --name-only HEAD~1..HEAD || true", returnStdout: true).trim()
 
                         if (changes.contains('environments/dev')) {
-                            env.TARGET_ENV = 'dev'
+                            env.DETECTED_ENV = 'dev'
                         } else if (changes.contains('environments/stag')) {
-                            env.TARGET_ENV = 'stag'
+                            env.DETECTED_ENV = 'stag'
                         } else if (changes.contains('environments/prod')) {
-                            env.TARGET_ENV = 'prod'
+                            env.DETECTED_ENV = 'prod'
                         } else {
-                            env.TARGET_ENV = 'dev'
+                            env.DETECTED_ENV = 'dev'
                         }
-
                     } else {
-                        env.TARGET_ENV = params.ENVIRONMENT
+                        env.DETECTED_ENV = params.ENVIRONMENT
                     }
 
-                    echo "🎯 Target Environment: ${env.TARGET_ENV}"
+                    echo "🎯 Target Environment: ${env.DETECTED_ENV}"
                 }
             }
         }
 
-        stage('AWS Credentials Check') {
+        stage('AWS Auth Check') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
-                ]]) {
-                    sh 'aws sts get-caller-identity'
+                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
+                    sh "aws sts get-caller-identity"
                 }
             }
         }
 
         stage('Terraform Init & Plan') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
-                ]]) {
+                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
                         set -e
-                        cd environments/${TARGET_ENV}
+                        cd environments/${DETECTED_ENV}
 
                         echo "🚀 Terraform Init"
                         terraform init -reconfigure -input=false
@@ -91,97 +82,30 @@ pipeline {
                 expression { params.APPLY_TERRAFORM == true }
             }
             steps {
-                input message: "Apply Terraform for ${env.TARGET_ENV}?", ok: "YES"
+                input message: "Apply Terraform for ${env.DETECTED_ENV}?"
 
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829'
-                ]]) {
+                withCredentials([aws(credentialsId: '58cd422e-c62f-42b3-90fa-13626c77e829')]) {
                     sh '''
-                        set -e
-                        cd environments/${TARGET_ENV}
-
+                        cd environments/${DETECTED_ENV}
                         terraform apply -auto-approve tfplan
-                        terraform output -json > outputs.json
                     '''
                 }
-            }
-        }
-
-        stage('Generate Ansible Inventory') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                sh '''
-                    python3 scripts/terraform_to_ansible.py \
-                        environments/${TARGET_ENV} \
-                        ansible/inventory.ini
-                '''
-            }
-        }
-
-        stage('Install Ansible') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                sh '''
-                    sudo apt update -y
-                    sudo apt install -y ansible
-                    ansible --version
-                '''
-            }
-        }
-
-        stage('SSH Setup') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                withCredentials([file(credentialsId: 'devops-ssh-key', variable: 'SSH_KEY')]) {
-                    sh '''
-                        mkdir -p ~/.ssh
-                        cp $SSH_KEY ~/.ssh/id_rsa
-                        chmod 600 ~/.ssh/id_rsa
-
-                        HOST=$(grep ansible_host ansible/inventory.ini | head -1 | awk '{print $NF}' | cut -d'=' -f2)
-
-                        ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
-                    '''
-                }
-            }
-        }
-
-        stage('Run Ansible') {
-            when {
-                expression { params.RUN_ANSIBLE == true }
-            }
-            steps {
-                sh '''
-                    ansible-playbook \
-                        -i ansible/inventory.ini \
-                        ansible/playbook.yml \
-                        -u ubuntu \
-                        --private-key=~/.ssh/id_rsa
-                '''
             }
         }
 
         stage('Verify') {
             steps {
-                echo "✅ Deployment completed for ${env.TARGET_ENV}"
+                echo "✅ Deployment completed for ${env.DETECTED_ENV}"
             }
         }
     }
 
     post {
         success {
-            echo "🎉 SUCCESS: ${env.TARGET_ENV} deployment completed"
+            echo "🎉 SUCCESS: ${env.DETECTED_ENV} deployment done"
         }
-
         failure {
-            echo "❌ FAILED pipeline - check logs"
+            echo "❌ FAILED pipeline"
         }
     }
 }
